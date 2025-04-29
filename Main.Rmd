@@ -1,0 +1,85 @@
+---
+title: "Project in Statistics 2025"
+author: "Dina Jensen."
+date: "2025-04-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Packages 
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(tidyr)
+```
+
+## Simulationfunction
+Attempting to write a simulation function using Jonas' brief intro
+
+Here the true parameters are defined:
+```{r}
+#true parameters for OU process
+mu_t <- 0
+omega_2_t <- 1
+```
+
+We then define a sampler for the random effects. This is customizable. But for the Ornstein-Uhlenbeck SDE it is simply just a vector of normals:
+```{r}
+#Random effects for Ornstein-Uhlenbeck process
+random_effects_OU <- function(n, mu = mu_t, omega_2 = omega_2_t) {
+  rnorm(n, mean = mu, sd = sqrt(omega_2))
+}
+```
+
+Here we define the functions $F$ ang $G$ for the OU-process. These are the drift and diffusion functions.
+```{r}
+#Drift-functio
+F_OU <- function(x, phi){
+  return(phi*x)
+}
+
+#Diffusion-function, here it is simply constant 1:
+G_OU <- function(x, phi){
+  return(1)
+}
+```
+
+
+We then define a function to simulate the Ornstein-Uhlenbeck process. This is a simple function that takes the random effects and simulates the process using the Euler-Maruyama method:
+```{r}
+#A general approach at a simulator
+EuM_simulate <- function(n, dt = 0.01, f, G, random_effect, x0 = 0){
+  
+}
+```
+
+
+
+```{r}
+#Simulate the Ornstein-Uhlenbeck process
+OU_process <- function(n, mu = mu_t, omega_2 = omega_2_t, dt = 0.01) {
+  # Initialize the process
+  x <- numeric(n)
+  x[1] <- rnorm(1, mean = mu, sd = sqrt(omega_2))
+  
+  # Simulate the process
+  for (i in 2:n) {
+    x[i] <- x[i - 1] + (mu - x[i - 1]) * dt + rnorm(1, mean = 0, sd = sqrt(omega_2 * dt))
+  }
+  
+  return(x)
+}
+```
+
+
+
+
+
+
+
+
