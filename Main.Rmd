@@ -18,68 +18,138 @@ library(readr)
 library(tidyr)
 ```
 
-## Simulationfunction
-Attempting to write a simulation function using Jonas' brief intro
+## Sourcing
 
-Here the true parameters are defined:
+Loading the libraries containing defining functions, i.e drift, diffusion, random effects etc. 
+Can be done for multiple processes.
+
+Ornstein-Uhlenbeck process:
+```{r}
+source("OU.R")
+```
+
+## Simulationfunction
+
+The function that simulates from the SDE with random effects, which takes as input:
+- function that generates random effects
+- function that generates the drift
+- function that generates the diffusion
+- m number of samples, n number of individuals
+- dt the time step
+- and x0 the initial value of the process
+
+```{r}
+#A general approach at a simulator
+EuM_simulate <- function(m, n, dt = 0.01, f, G, random_effect, x0){
+  #Setting x0 to 0 for all paths if it is left empty or set to null
+  
+  if (missing(x0) || is.null(x0)) {
+    x0 <- rep(0, n)
+  }
+  
+  # Initialize the matrix to store the paths
+  paths <- matrix(0, nrow = m, ncol = n)
+  
+  # Set the initial value
+  paths[1, ] <- x0
+  
+  # Generate random effects
+  U <- random_effect(n)
+  
+  #Simulating the process m times for each path
+  for (i in 1:n) {
+    for (j in 2:m) {
+      # Update the path using the Euler-Maruyama method
+      paths[j, i] <- paths[j - 1, i] + f(paths[j - 1, i], U[i]) * dt + G(paths[j - 1, i], U[i]) * sqrt(dt) * rnorm(1)
+    }
+  }
+  return(paths)
+}
+```
+
+
+## Function for plotting the paths
+
+A function that visualizes the paths generated. Makes it easy to spot any convergence issues etc.
+```{r}
+path_plot <- function(data, steplength){
+# Convert the matrix to a data frame for plotting
+paths_df <- as.data.frame(data)
+
+# Add a time variable
+paths_df <- paths_df %>%
+  mutate(time = seq(0, nrow(paths_df) - 1) * steplength) %>%
+  pivot_longer(-time, names_to = "path", values_to = "value")
+
+# Plot the paths
+ggplot(paths_df, aes(x = time, y = value, group = path, colour = path)) +
+  geom_line() +
+  labs(title = "Simulated Paths of the Ornstein-Uhlenbeck Process",
+       x = "Time",
+       y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "none") 
+}
+```
+
+
+## Estimating the parameters
+
+In the file containing functions for the OU-process is also a function to estimate the parameters mu and omega^2. It is based on the loglikelihood/contrast approach from Delattre et al. (2013) and is implemented in the function `OU_estimator`. The function takes as input the simulated data and returns the estimated parameters.
+
+There are a bunch of numerical trouble when estimating omega, but maybe it depends on the values of omega??
+
+
+Testing
+Here the true parameters are defined. Beware that phi needs to be negative?? To give well-defined solution perhaps:
 ```{r}
 #true parameters for OU process
-mu_t <- 0
+mu_t <- -5
 omega_2_t <- 1
 ```
 
-We then define a sampler for the random effects. This is customizable. But for the Ornstein-Uhlenbeck SDE it is simply just a vector of normals:
 ```{r}
-#Random effects for Ornstein-Uhlenbeck process
-random_effects_OU <- function(n, mu = mu_t, omega_2 = omega_2_t) {
-  rnorm(n, mean = mu, sd = sqrt(omega_2))
-}
+test <- EuM_simulate(m = 1000, n = 100, dt = 0.01, f = F_OU, G = G_OU, random_effect = random_effects_OU, x0 = rep(5,10))
+path_plot(test, 0.01)
 ```
 
-Here we define the functions $F$ ang $G$ for the OU-process. These are the drift and diffusion functions.
 ```{r}
-#Drift-functio
-F_OU <- function(x, phi){
-  return(phi*x)
-}
-
-#Diffusion-function, here it is simply constant 1:
-G_OU <- function(x, phi){
-  return(1)
-}
+OU_estimator(test)
 ```
 
+## Simulation scheme
 
-We then define a function to simulate the Ornstein-Uhlenbeck process. This is a simple function that takes the random effects and simulates the process using the Euler-Maruyama method:
+Want a setup that can handle a change in the different styles of parameters... So you need to think
+
+
+
+
+
+
+Plotting a heatmeap of the contrast function, with the parametervalues on the x and y axes.
 ```{r}
-#A general approach at a simulator
-EuM_simulate <- function(n, dt = 0.01, f, G, random_effect, x0 = 0){
-  
+# Create a grid of parameter values
+param_grid <- expand.grid(mu = seq(-10, 10, length.out = 100),
+                            omega = seq(0.01, 5, length.out = 100))
+# Initialize a matrix to store the contrast values
+contrast_values <- matrix(NA, nrow = nrow(param_grid), ncol = 1)
+# Calculate the contrast values for each parameter combination
+for (i in 1:nrow(param_grid)) {
+  contrast_values[i] <- l_Nn(c(param_grid$mu[i], param_grid$omega[i]))
 }
+# Reshape the contrast values into a matrix
+contrast_matrix <- matrix(contrast_values, nrow = 100, ncol = 100)
+# Create a heatmap
+library(ggplot2)
+library(reshape2)
+heatmap_data <- melt(contrast_matrix)
+colnames(heatmap_data) <- c("mu", "omega", "contrast")
+ggplot(heatmap_data, aes(x = mu, y = omega, fill = contrast)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "Heatmap of Contrast Function",
+       x = "mu",
+       y = "omega") +
+  theme_minimal()
 ```
-
-
-
-```{r}
-#Simulate the Ornstein-Uhlenbeck process
-OU_process <- function(n, mu = mu_t, omega_2 = omega_2_t, dt = 0.01) {
-  # Initialize the process
-  x <- numeric(n)
-  x[1] <- rnorm(1, mean = mu, sd = sqrt(omega_2))
-  
-  # Simulate the process
-  for (i in 2:n) {
-    x[i] <- x[i - 1] + (mu - x[i - 1]) * dt + rnorm(1, mean = 0, sd = sqrt(omega_2 * dt))
-  }
-  
-  return(x)
-}
-```
-
-
-
-
-
-
-
 
