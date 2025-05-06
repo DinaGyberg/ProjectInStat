@@ -16,6 +16,10 @@ library(ggplot2)
 library(dplyr)
 library(readr)
 library(tidyr)
+library(gridExtra)
+
+#Colors 
+#darkcyan, indianred, olivedrab, darkslateblue
 ```
 
 ## Sourcing
@@ -28,6 +32,13 @@ Ornstein-Uhlenbeck process:
 source("OU.R")
 ```
 
+Here the true parameters are defined. Beware that phi needs to be negative?? To give well-defined solution perhaps:
+```{r}
+#true parameters for OU process
+mu_t <- -5
+omega_t <- 1
+```
+
 ## Simulationfunction
 
 The function that simulates from the SDE with random effects, which takes as input:
@@ -36,11 +47,11 @@ The function that simulates from the SDE with random effects, which takes as inp
 - function that generates the diffusion
 - m number of samples, n number of individuals
 - dt the time step
-- and x0 the initial value of the process
+- and x0 a function that generates the initial values for the process. The function should take as input the number of individuals and return a vector of initial values.
 
 ```{r}
 #A general approach at a simulator
-EuM_simulate <- function(m, n, dt = 0.01, f, G, random_effect, x0){
+EuM_simulate <- function(m, n, dt = 0.01, f, G, random_effect, true_par, x0){
   #Setting x0 to 0 for all paths if it is left empty or set to null
   
   if (missing(x0) || is.null(x0)) {
@@ -51,10 +62,11 @@ EuM_simulate <- function(m, n, dt = 0.01, f, G, random_effect, x0){
   paths <- matrix(0, nrow = m, ncol = n)
   
   # Set the initial value
-  paths[1, ] <- x0
+  x0_n <- x0(n)
+  paths[1, ] <- x0_n
   
   # Generate random effects
-  U <- random_effect(n)
+  U <- random_effect(n, true_par)
   
   #Simulating the process m times for each path
   for (i in 1:n) {
@@ -92,34 +104,356 @@ ggplot(paths_df, aes(x = time, y = value, group = path, colour = path)) +
 }
 ```
 
+Testing
+
+
+```{r}
+X0_OU <- function(n){
+  return(rep(1, n))
+}
+
+test <- EuM_simulate(m = 10000, n = 10, dt = 0.01, f = F_OU, G = G_OU, random_effect = random_effects_OU, true_par = c(mu_t, omega_t), X0_OU)
+path_plot(test, 0.01)
+```
 
 ## Estimating the parameters
 
 In the file containing functions for the OU-process is also a function to estimate the parameters mu and omega^2. It is based on the loglikelihood/contrast approach from Delattre et al. (2013) and is implemented in the function `OU_estimator`. The function takes as input the simulated data and returns the estimated parameters.
 
-There are a bunch of numerical trouble when estimating omega, but maybe it depends on the values of omega??
 
+There are a bunch of numerical trouble when estimating omega, but maybe it depends on the values of omega. Yes - and on the starting value of the process...
+
+##
+
+First I need to be able to simulate correctly. Maybe just simulate for n=500 and m=10000 and then extract different sets later?
+```{r}
+#Function to simulate multiple datasets
+sim <- function(B, m, n, dt = 0.01, f, G, random_effect, true_par, x0){
+  #Create a list to store the datasets
+  sim_datasets <- vector("list", B)
+  
+  #Simulate datasets 
+  for (i in 1:B) {
+    sim_datasets[[i]] <- EuM_simulate(m = m, n = n, dt = dt, f = f, G = G, 
+                                      random_effect = random_effect, true_par = true_par, x0 = x0)
+  }
+  
+  return(sim_datasets)
+}
+```
+
+Testing - it gets quite big quite fast - takes a shitload of memory, so maybe we need to optimize somehow...
+```{r}
+small_t <- sim(10, m = 100, n = 50, dt = 0.01, f = F_OU, G = G_OU, 
+                random_effect = random_effects_OU, true_par = c(mu_t, omega_t), x0 = X0_OU)
+
+new_test <- sim(10, m = 10000, n = 500, dt = 0.01, f = F_OU, G = G_OU, 
+                random_effect = random_effects_OU, true_par = c(mu_t, omega_t), x0 = X0_OU) 
+
+```
+
+## Visualizing some stuff.. 
+
+You have an estimator and you datasets. Now you just need to get plotting.
+
+
+### Consistency plots
+
+Creating a dataset of the estimators we are going to plot. We want to estimate parameters - 9 for each dataset. So for n = 10, 100 and 500 and m = 100, 1000, 10000 respectively.
+
+```{r}
+#defining n and m vectors to ease my life goddammit
+n_vals <- c(50,200,500)
+m_vals <- c(1000, 2000, 10000)
+```
+
+
+```{r}
+par_estimates_by_nm <- function(datasets, n, m, est_fct, par_names) {
+  
+  B <- length(datasets)
+  N <- length(n)
+  M <- length(m)
+  
+  # Total number of (n, m) combinations
+  total_combos <- N * M
+  
+  # Pre-allocate list: one dataframe per (n, m)
+  nm_estimates <- vector("list", total_combos)
+  
+  # Fill with empty dataframes to append into
+  for (idx in 1:total_combos) {
+    nm_estimates[[idx]] <- data.frame(matrix(NA, nrow = B, ncol = length(par_names)))
+    colnames(nm_estimates[[idx]]) <- par_names
+  }
+  
+  # Loop over each dataset
+  for (i in 1:B) {
+    data_i <- datasets[[i]]
+    
+    # Loop over each combination of (n, m)
+    for (j in 1:N) {
+      for (l in 1:M) {
+        idx <- (j - 1) * M + l  # Index in nm_estimates
+        
+        # Estimate parameters
+        params <- est_fct(data_i[1:m[l], 1:n[j]])
+        
+        # Store the parameter estimates in the i-th row of the (j,l) dataframe
+        nm_estimates[[idx]][i, ] <- params
+      }
+    }
+  }
+  
+  # Add n and m labels as attributes or rownames
+  names(nm_estimates) <- paste0("n_", rep(n, each = M), "_m_", rep(m, times = N))
+  
+  return(list(nm_estimates, par_names))
+}
+
+```
 
 Testing
-Here the true parameters are defined. Beware that phi needs to be negative?? To give well-defined solution perhaps:
 ```{r}
-#true parameters for OU process
-mu_t <- -5
-omega_2_t <- 1
+estimates_test <- par_estimates_by_nm(new_test, n = n_vals, m = m_vals, est_fct = OU_estimator, par_names = c("mu", "omega"))
 ```
 
-```{r}
-test <- EuM_simulate(m = 1000, n = 100, dt = 0.01, f = F_OU, G = G_OU, random_effect = random_effects_OU, x0 = rep(5,10))
-path_plot(test, 0.01)
-```
+Ok maybe the bad behavior of omega has to do with the stepsize. You may need to reconsider how you sample, because you need to keep T fixed i guess. Or be able to control you T and not just your stepsize. If T is 10 and stepsize is 0.01 then it is bad? But if T=100 and stepsize is 0.01 it is bad? But delta is the same anyway? its 0.01, so wtf is happening.
+
+Also we want the average estimates and their standard deviation, so Im gonna write a function for that too...
 
 ```{r}
-OU_estimator(test)
+extr_mean <- function(estimates, n, m) {
+  # Get estimates list and parameter names
+  estimates_l <- estimates[[1]]
+  est_names <- estimates[[2]]
+  
+  # Total number of (n, m) combinations and parameters
+  L <- length(estimates_l)
+  no_est <- length(est_names)
+  
+  # Generate all combinations of (n, m)
+  combo_df <- expand.grid(m = m, n = n)
+  
+  # Preallocate output
+  mean_parameter_estimates <- data.frame(
+    n = combo_df$n,
+    m = combo_df$m,
+    matrix(NA, nrow = L, ncol = no_est)
+  )
+  colnames(mean_parameter_estimates)[3:(2 + no_est)] <- est_names
+  
+  # Compute means
+  for (j in 1:L) {
+    for (i in 1:no_est) {
+      mean_parameter_estimates[j, i + 2] <- mean(estimates_l[[j]][[est_names[i]]])
+    }
+  }
+  
+  return(mean_parameter_estimates)
+}
 ```
+
+
+```{r}
+t_mean_estimates <- extr_mean(estimates_test, n = n_vals, m = m_vals)
+```
+Also writing a function to get sd
+```{r}
+extr_sd <- function(estimates, n, m) {
+  # Get estimates list and parameter names
+  estimates_l <- estimates[[1]]
+  est_names <- estimates[[2]]
+  
+  # Total number of (n, m) combinations and parameters
+  L <- length(estimates_l)
+  no_est <- length(est_names)
+  
+  # Generate all combinations of (n, m)
+  combo_df <- expand.grid(m = m, n = n)
+  
+  # Preallocate output
+  sd_parameter_estimates <- data.frame(
+    n = combo_df$n,
+    m = combo_df$m,
+    matrix(NA, nrow = L, ncol = no_est)
+  )
+  colnames(sd_parameter_estimates)[3:(2 + no_est)] <- est_names
+  
+  # Compute means
+  for (j in 1:L) {
+    for (i in 1:no_est) {
+      sd_parameter_estimates[j, i + 2] <- sd(estimates_l[[j]][[est_names[i]]])
+    }
+  }
+  
+  return(sd_parameter_estimates)
+}
+
+extr_sd(estimates_test, n = n_vals, m = m_vals)
+
+```
+
+## Now trying to visualize consistency
+
+```{r}
+#Plot function for consistency. Needs a mean_list as input
+cons_plot <- function(data, n, true_par){
+  
+  #Extract names for parameters
+  names_n <- names(data)[3:length(names(data))]
+
+    #Get data
+    data_p <- data[data$n == n,]
+ 
+    #format data
+    data_p <- data_p %>%
+      pivot_longer(cols = names_n, names_to = "Parameter", values_to = "value")
+    
+    # Create the plot
+    plot <- ggplot(data_p, aes(x = m, y = value, color = Parameter)) +
+               geom_line(size = 0.7) +
+               geom_point(size = 2) +
+               geom_hline(yintercept = true_par, linetype = "dashed", color = "indianred", size = 0.7) +
+               labs(title = paste("n =", n),
+                     x = "Number of Samples (m)",
+                    y = "Estimated Parameter Value") + 
+              theme_bw() + 
+              scale_color_manual(values = c("darkcyan", "olivedrab", "steelblue"), 
+                            breaks = names_n,
+                           labels = names_n, 
+                           name = "Parameter") 
+  
+  return(plot)
+}
+```
+
+
+```{r}
+cons_plot(t_mean_estimates, n = 500, true_par = c(mu_t, omega_t))
+
+```
+
+
+
+## Visualizing for m going to infinity for different n
+
+```{r}
+conv_plot_multiple_n <- function(datasets, true_par){
+  #Extract names for parameters
+  names_n <- names(data)[2:length(names(data))]
+  
+  # Convert the data to long format for ggplot
+  data_long <- data %>%
+    pivot_longer(cols = names_n, names_to = "Parameter", values_to = "value")
+  
+  # Create the plot
+  ggplot(data_long, aes(x = n, y = value, color = Parameter)) +
+    geom_line(size = 0.7) +
+    geom_point(size = 2) +
+    geom_hline(yintercept = true_par, linetype = "dashed", color = "indianred", size = 0.7) +
+    labs(title = "Convergence of Parameter Estimates",
+         x = "Number of Individuals (n)",
+         y = "Estimated Parameter Value") + 
+    theme_bw() + 
+    scale_color_manual(values = c("darkcyan", "olivedrab", "steelblue"), 
+                      breaks = names_n,
+                     labels = names_n, 
+                     name = "Parameter") 
+}
+
+```
+
 
 ## Simulation scheme
 
-Want a setup that can handle a change in the different styles of parameters... So you need to think
+Firstly - the easy one. Simply investigating what happens for n going to infinity. I.e the number of individuals.
+
+### number of individuals
+
+A function that takes different values of n and simulates the process for each value. It then estimates the parameters and stores them in a data frame. Be aware that your estimator function should return a vector, and that this is not modified to allow for more than 2 parameters...
+```{r}
+# Function to simulate and estimate parameters for different n
+n_singlevalue_sim <- function(n, m, dt, f, G, random_effect, true_par, x0, est_fct, par_names){
+  
+  #Initializing
+  N <- length(n)
+  # Create a data frame to store the results, with n as first column and then 1 column for each par_names, with the name of the       #parameter
+  results <- data.frame(matrix(NA, nrow = N, ncol = length(par_names) + 1))
+  colnames(results) <- c("n", par_names)
+  
+  for (i in 1:N) {
+    
+    # Simulate the process
+    data <- EuM_simulate(m = m, n = n[i], dt = dt, f = f, G = G, random_effect = random_effect, true_par = true_par, x0 = x0)
+  
+    # Estimate the parameters
+    params <- est_fct(data)
+    
+    # Store the results
+    results[i, ] <- c(n[i], params[1], params[2])
+    
+  }
+  
+  return(results)
+  
+}
+```
+
+
+
+
+Testing and ensuring shit works:
+```{r}
+x0_OU <- function(n){
+  return(rep(-1, n))
+}
+
+n_test <- n_singlevalue_sim(n = seq(1, 200, 10), m = 3000, dt = 0.01, f = F_OU, G = G_OU, 
+                  random_effect = random_effects_OU, true_par = c(mu_t, omega_t), x0 = x0_OU, est_fct = OU_estimator, par_names = c("mu", "tao"))
+```
+
+
+### Visualizing
+
+#A plot of the convergence
+```{r}
+conv_plot <- function(data, true_par){
+  #Extract names for parameters
+  names_n <- names(data)[2:length(names(data))]
+  
+  # Convert the data to long format for ggplot
+  data_long <- data %>%
+    pivot_longer(cols = names_n, names_to = "Parameter", values_to = "value")
+  
+  # Create the plot
+  ggplot(data_long, aes(x = n, y = value, color = Parameter)) +
+    geom_line(size = 0.7) +
+    geom_point(size = 2) +
+    geom_hline(yintercept = true_par, linetype = "dashed", color = "indianred", size = 0.7) +
+    labs(title = "Convergence of Parameter Estimates",
+         x = "Number of Individuals (n)",
+         y = "Estimated Parameter Value") + 
+    theme_bw() + 
+    scale_color_manual(values = c("darkcyan", "olivedrab", "steelblue"), 
+                      breaks = names_n,
+                     labels = names_n, 
+                     name = "Parameter") 
+}
+```
+
+
+```{r}
+conv_plot(n_test, true_par = c(mu_t, omega_t))
+names(n_test)
+```
+
+This is however not the actual convergence we want to illustrate.. We want to illustrate what happens when n and m goes to infinity. Here we should get both consistency and asympttoic normality, using the fact that the continous likelihood estimator is supposedly asymptotically normal. So we need to simulate for different values of m and n, and then estimate the parameters for each combination.
+
+
+
+
+
 
 
 

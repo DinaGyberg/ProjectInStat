@@ -1,8 +1,8 @@
 #-----------Functions for simulating Ornstein-Uhlenbeck process-------------------
 
 #Random effects for Ornstein-Uhlenbeck process
-random_effects_OU <- function(n, mu = mu_t, omega_2 = omega_2_t) {
-  rnorm(n, mean = mu, sd = sqrt(omega_2))
+random_effects_OU <- function(n, par) {
+  rnorm(n, mean = par[1], sd = par[2])
 }
 
 
@@ -30,6 +30,8 @@ U_in <- function(path){
 V_in <- function(path, sampleinterval){
   sampleinterval * sum(path[-length(path)]^2)
 }
+
+
 
 #The actual estimatorfunction
 OU_estimator <- function(data){
